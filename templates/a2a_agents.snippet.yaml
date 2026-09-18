@@ -1,0 +1,21 @@
+# Paste under ~/.hermes/config.yaml (settings, not secrets).
+# Put bearer tokens in ~/.hermes/.env or auth blocks carefully.
+
+a2a_agents:
+  example-friend:
+    url: "http://friend-host:9900"
+    auth:
+      type: bearer
+      token: "REPLACE_VIA_ENV_OR_SECRET_STORE"
+    timeout: 120
+    capabilities:
+      - schedule
+      - message.relay
+      - ping
+
+# gateway:
+#   platforms:
+#     a2a:
+#       enabled: true
+#       extra:
+#         port: 9900

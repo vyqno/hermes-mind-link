@@ -1,0 +1,24 @@
+# Mind-link trust registry
+# Install path: ~/.hermes/mind-link/trust.yaml
+version: 1
+self:
+  agent_id: mind:CHANGE_ME
+  surface: telegram
+  notes: "Human surface is Telegram; outbound defaults to peer agents."
+
+links:
+  - id: example-friend
+    display_name: Example Friend
+    status: pending   # pending | active | paused
+    agent:
+      kind: a2a       # a2a | hermes_peer | local_profile
+      ref: example-friend
+    human:
+      telegram_user_id: null
+    scopes:
+      - schedule.probe
+      - message.relay
+      - ping
+    standing_grants: []
+    delivery_default: agent
+    notes: "Activate when peer shares A2A URL + token. Never collect their passwords."
