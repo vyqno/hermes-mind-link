@@ -30,6 +30,22 @@ People are saying “Instinct killed Hermes / Claude.” That confuses **consume
 
 Even Greg Isenberg’s Instinct walkthrough (with Remy, Sep 2026) ends in a **stack split**, not a kill shot: work agents (Hermes / OpenClaw / Codex / Claude Code) vs personal life-admin polish (Instinct). See [`docs/instinct-vs-open-agents.md`](docs/instinct-vs-open-agents.md).
 
+## Cloudflare UI (v0.4)
+
+Full browser product under [`cloudflare/`](cloudflare/):
+
+- Create mind · token login · **contacts** · **invite links** · groups · inbox · work board · Hermes setup pack
+- D1 + Workers + static UI — Instinct-shaped onboarding for anyone
+
+```bash
+cd cloudflare && npm install
+npx wrangler login
+npx wrangler d1 create mind-link   # paste id into wrangler.toml
+npm run db:remote && npm run deploy
+```
+
+Local UI: `cd cloudflare && npm run db:local && npm run dev` → http://127.0.0.1:8788
+
 ## Network model (how Instinct actually works)
 
 Instinct does **not** VPN your laptop to your friend’s laptop.  

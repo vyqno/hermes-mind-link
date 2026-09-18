@@ -10,3 +10,7 @@ dist/
 .secrets/
 research/*.vtt
 hub-data/
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/hub-data/
+*.sqlite3
