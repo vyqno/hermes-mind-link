@@ -1,13 +1,15 @@
-"""CLI: mind-link validate | prompt | envelope | list | context | preview-share | scrub"""
+"""CLI: mind-link validate | hub | context | preview-share | ..."""
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from .context_board import ContextBoard
 from .envelope import build_envelope, parse_envelope
+from .hub_client import HubClient, HubError
 from .privacy import build_ambient_envelope_body, explain_share, scrub_personal_text
 from .trust import TrustError, TrustRegistry
 
@@ -74,7 +76,62 @@ def main(argv=None) -> int:
     _add_trust(pol)
     pol.add_argument("link_id")
 
+    hub = sub.add_parser("hub", help="Public HTTPS mind-link hub (no VPN between friends)")
+    hub.add_argument(
+        "--url",
+        default=os.environ.get("MINDLINK_HUB_URL", "http://127.0.0.1:8787"),
+        help="Hub base URL",
+    )
+    hub.add_argument(
+        "--token",
+        default=os.environ.get("MINDLINK_HUB_TOKEN"),
+        help="Hub bearer token (or MINDLINK_HUB_TOKEN)",
+    )
+    hub_sub = hub.add_subparsers(dest="hub_cmd", required=True)
+    hr = hub_sub.add_parser("register", help="Register agent_id; prints token once")
+    hr.add_argument("--agent-id", required=True)
+    hr.add_argument("--name", default="")
+    hs = hub_sub.add_parser("send", help="Send envelope to agent or group")
+    hs.add_argument("--to", default=None)
+    hs.add_argument("--to-group", default=None)
+    hs.add_argument("--envelope", default=None, help="Envelope text; default stdin")
+    hi = hub_sub.add_parser("inbox", help="Poll inbox")
+    hi.add_argument("--limit", type=int, default=20)
+    hg = hub_sub.add_parser("group", help="Create/update a group")
+    hg.add_argument("--group-id", required=True)
+    hg.add_argument("--members", required=True, help="Comma-separated mind: ids")
+
     args = p.parse_args(argv)
+
+    if args.cmd == "hub":
+        client = HubClient(args.url, token=args.token)
+        try:
+            if args.hub_cmd == "register":
+                out = client.register(args.agent_id, args.name or args.agent_id)
+                print(json.dumps(out, indent=2))
+                print(
+                    "Save token: export MINDLINK_HUB_TOKEN=...  (and MINDLINK_HUB_URL)",
+                    file=sys.stderr,
+                )
+                return 0
+            if args.hub_cmd == "send":
+                env_text = args.envelope if args.envelope is not None else sys.stdin.read()
+                out = client.send(env_text, to=args.to, to_group=args.to_group)
+                print(json.dumps(out, indent=2))
+                return 0
+            if args.hub_cmd == "inbox":
+                msgs = client.inbox(args.limit)
+                print(json.dumps({"messages": msgs}, indent=2))
+                return 0
+            if args.hub_cmd == "group":
+                members = [m.strip() for m in args.members.split(",") if m.strip()]
+                out = client.ensure_group(args.group_id, members)
+                print(json.dumps(out, indent=2))
+                return 0
+        except HubError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        return 1
 
     if args.cmd == "parse":
         text = args.text if args.text is not None else sys.stdin.read()

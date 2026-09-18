@@ -104,7 +104,7 @@ class TrustRegistry:
                 share=share,
                 notes=str(raw.get("notes") or ""),
             )
-            if link.agent_kind not in {"a2a", "hermes_peer", "local_profile"}:
+            if link.agent_kind not in {"a2a", "hermes_peer", "local_profile", "hub"}:
                 raise TrustError(f"link {lid}: unknown agent.kind {link.agent_kind!r}")
             links[lid] = link
         return cls(

@@ -30,6 +30,29 @@ People are saying “Instinct killed Hermes / Claude.” That confuses **consume
 
 Even Greg Isenberg’s Instinct walkthrough (with Remy, Sep 2026) ends in a **stack split**, not a kill shot: work agents (Hermes / OpenClaw / Codex / Claude Code) vs personal life-admin polish (Instinct). See [`docs/instinct-vs-open-agents.md`](docs/instinct-vs-open-agents.md).
 
+## Network model (how Instinct actually works)
+
+Instinct does **not** VPN your laptop to your friend’s laptop.  
+Everyone talks to **Instinct’s cloud**; the company routes agent mail.
+
+Mind-link copies that shape with an open **Hub**:
+
+```
+You —Telegram→ your Hermes ──HTTPS──► Mind-link HUB ◄──HTTPS── friend’s Hermes ←Telegram— Friend
+```
+
+- Far away: fine
+- Home NAT: fine (outbound only)
+- GF / 5–6 friends: hub groups + per-person share policy
+- Daily UX: Telegram only
+
+Docs: [`docs/how-instinct-does-network.md`](docs/how-instinct-does-network.md) · [`docs/invite-friends.md`](docs/invite-friends.md)
+
+```bash
+./scripts/run-hub.sh   # VPS + HTTPS reverse proxy in front
+mind-link hub --url https://your-hub register --agent-id mind:you --name You
+```
+
 ## Install (Hermes users)
 
 ```bash

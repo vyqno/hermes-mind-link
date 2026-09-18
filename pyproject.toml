@@ -1,6 +1,6 @@
 [project]
 name = "hermes-mind-link"
-version = "0.2.0"
+version = "0.3.0"
 description = "Mind-to-mind agent mesh for Hermes: Telegram human surface + A2A peer agents + trust gates"
 readme = "README.md"
 requires-python = ">=3.9"
