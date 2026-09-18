@@ -10,20 +10,33 @@ from .envelope import build_envelope, parse_envelope
 from .trust import TrustError, TrustRegistry
 
 
-def main(argv=None):
+def _add_trust(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--trust",
+        type=Path,
+        default=None,
+        help="Path to trust.yaml (default: $HERMES_HOME/mind-link/trust.yaml)",
+    )
+
+
+def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="mind-link", description="Hermes Mind-link utilities")
-    p.add_argument("--trust", type=Path, default=None, help="Path to trust.yaml")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("validate", help="Validate trust.yaml")
-    sub.add_parser("list", help="List links")
+    v = sub.add_parser("validate", help="Validate trust.yaml")
+    _add_trust(v)
+
+    ls = sub.add_parser("list", help="List links")
+    _add_trust(ls)
 
     pp = sub.add_parser("prompt", help="Print confirm prompt for a link")
+    _add_trust(pp)
     pp.add_argument("link_id")
     pp.add_argument("--body", required=True)
     pp.add_argument("--scope", default="message.relay")
 
     pe = sub.add_parser("envelope", help="Build an outbound envelope")
+    _add_trust(pe)
     pe.add_argument("link_id")
     pe.add_argument("--body", required=True)
     pe.add_argument("--intent", default="relay")
@@ -33,21 +46,35 @@ def main(argv=None):
     pr.add_argument("--text", default=None)
 
     args = p.parse_args(argv)
+    trust_path = getattr(args, "trust", None)
+
+    if args.cmd == "parse":
+        text = args.text if args.text is not None else sys.stdin.read()
+        env = parse_envelope(text)
+        if not env:
+            print("error: not a mind-link envelope", file=sys.stderr)
+            return 2
+        print(json.dumps(env.__dict__, indent=2))
+        return 0
+
     try:
-        reg = TrustRegistry.load(args.trust)
+        reg = TrustRegistry.load(trust_path)
     except TrustError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
     if args.cmd == "validate":
-        print(f"ok version={reg.version} self={reg.self_agent_id} links={len(reg.links)} path={reg.path}")
+        print(
+            f"ok version={reg.version} self={reg.self_agent_id} "
+            f"links={len(reg.links)} path={reg.path}"
+        )
         return 0
 
     if args.cmd == "list":
         for link in reg.links.values():
             print(
-                f"{link.id}	{link.status}	{link.agent_kind}/{link.agent_ref}	"
-                f"{link.delivery_default}	{link.display_name}"
+                f"{link.id}\t{link.status}\t{link.agent_kind}/{link.agent_ref}\t"
+                f"{link.delivery_default}\t{link.display_name}"
             )
         return 0
 
@@ -75,15 +102,6 @@ def main(argv=None):
             requires_human_on_receipt=args.human_on_receipt,
         )
         print(env.render(), end="")
-        return 0
-
-    if args.cmd == "parse":
-        text = args.text if args.text is not None else sys.stdin.read()
-        env = parse_envelope(text)
-        if not env:
-            print("error: not a mind-link envelope", file=sys.stderr)
-            return 2
-        print(json.dumps(env.__dict__, indent=2))
         return 0
 
     return 1
