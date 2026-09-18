@@ -15,5 +15,4 @@ database_id = "a09607ad-6bd0-4239-93be-f85d0bf4f1e4"
 
 [vars]
 APP_NAME = "Mind-link"
-# Set after first deploy if you use a custom domain
-# PUBLIC_ORIGIN = "https://hermes-mind-link.<subdomain>.workers.dev"
+PUBLIC_ORIGIN = "https://hermes-mind-link.vyqno-xyz.workers.dev"
