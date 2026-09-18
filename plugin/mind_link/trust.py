@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any, Optional
 import os
 
+from .privacy import SharePolicy, policy_from_dict, SENSITIVE_ALWAYS_CONFIRM
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -27,6 +29,7 @@ class Link:
     scopes: list[str] = field(default_factory=list)
     standing_grants: list[str] = field(default_factory=list)
     delivery_default: str = "agent"
+    share: SharePolicy = field(default_factory=SharePolicy)
     notes: str = ""
 
     def allows_standing(self, scope: str) -> bool:
@@ -42,6 +45,7 @@ class TrustRegistry:
     version: int
     self_agent_id: str
     surface: str
+    ambient_default: bool
     links: dict[str, Link]
 
     @classmethod
@@ -67,6 +71,7 @@ class TrustRegistry:
         self_block = data.get("self") or {}
         self_id = str(self_block.get("agent_id") or "").strip()
         surface = str(self_block.get("surface") or "telegram").strip()
+        ambient_default = bool(self_block.get("ambient_default", True))
         if not self_id:
             raise TrustError("self.agent_id is required")
         links: dict[str, Link] = {}
@@ -81,6 +86,7 @@ class TrustRegistry:
             delivery = str(raw.get("delivery_default") or "agent").strip().lower()
             if delivery not in {"agent", "human", "both"}:
                 raise TrustError(f"link {lid}: invalid delivery_default {delivery!r}")
+            share = policy_from_dict(raw.get("share") or raw.get("share_policy"))
             link = Link(
                 id=lid,
                 display_name=str(raw.get("display_name") or lid),
@@ -95,6 +101,7 @@ class TrustRegistry:
                 scopes=[str(s) for s in (raw.get("scopes") or [])],
                 standing_grants=[str(s) for s in (raw.get("standing_grants") or [])],
                 delivery_default=delivery,
+                share=share,
                 notes=str(raw.get("notes") or ""),
             )
             if link.agent_kind not in {"a2a", "hermes_peer", "local_profile"}:
@@ -105,6 +112,7 @@ class TrustRegistry:
             version=version,
             self_agent_id=self_id,
             surface=surface,
+            ambient_default=ambient_default,
             links=links,
         )
 
@@ -114,6 +122,13 @@ class TrustRegistry:
             if lid.lower() == key or link.display_name.lower() == key:
                 return link
         raise TrustError(f"no trust link named {link_id!r}")
+
+    def active_ambient_links(self) -> list[Link]:
+        out = []
+        for link in self.links.values():
+            if link.is_active() and link.share.ambient and self.ambient_default:
+                out.append(link)
+        return out
 
     def confirm_prompt(self, link: Link, body: str, scope: str = "message.relay") -> str:
         dest = f"{link.display_name}'s agent (agent:{link.id})"
@@ -125,11 +140,17 @@ class TrustRegistry:
             f"To: {dest}\n"
             f"Via: {link.agent_kind}/{link.agent_ref}\n"
             f"Scope: {scope}\n"
+            f"Share mode: {link.share.mode}\n"
             f"Standing grant: {grant}\n"
             f"---\n{body.strip()}\n"
         )
 
     def needs_confirm(self, link: Link, scope: str) -> bool:
-        if scope in {"money", "legal", "medical", "reputation"}:
+        if scope in SENSITIVE_ALWAYS_CONFIRM or scope in {
+            "money",
+            "legal",
+            "medical",
+            "reputation",
+        }:
             return True
         return not link.allows_standing(scope)

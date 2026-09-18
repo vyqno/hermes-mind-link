@@ -1,24 +1,52 @@
 # Mind-link trust registry
 # Install path: ~/.hermes/mind-link/trust.yaml
-version: 1
+version: 2
 self:
   agent_id: mind:CHANGE_ME
   surface: telegram
-  notes: "Human surface is Telegram; outbound defaults to peer agents."
+  ambient_default: true
+  notes: >
+    Human surface is Telegram. Outbound defaults to peer agents.
+    Ambient sync shares work context only — never personal life by default.
 
 links:
   - id: example-friend
     display_name: Example Friend
-    status: pending   # pending | active | paused
+    status: pending
     agent:
-      kind: a2a       # a2a | hermes_peer | local_profile
+      kind: a2a
       ref: example-friend
     human:
       telegram_user_id: null
     scopes:
       - schedule.probe
       - message.relay
+      - ambient_context
       - ping
     standing_grants: []
     delivery_default: agent
-    notes: "Activate when peer shares A2A URL + token. Never collect their passwords."
+    share:
+      # work_only | explicit_only | custom
+      mode: work_only
+      ambient: true
+      ambient_requires_confirm_first: true
+      allow_categories:
+        - project_name
+        - project_goal_public
+        - shared_task_status
+        - availability_window
+        - meeting_intent
+        - public_links
+        - collab_blockers
+      deny_categories:
+        - dinner_food
+        - health
+        - family
+        - romance
+        - precise_location
+        - finance_personal
+        - credentials
+        - private_messages
+    notes: >
+      Activate when peer shares A2A URL + token.
+      They never receive dinner/health/family unless you change deny/allow.

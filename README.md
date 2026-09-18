@@ -101,6 +101,19 @@ requires_human_on_receipt: false
 Can Saturday 20:00 work for dinner near Indiranagar?
 ```
 
+## Privacy & ambient minds
+
+Default-on while you chat: minds can share **work context** with linked peer agents.
+Personal life (dinner, health, family, secrets) is **denied by default**.
+
+See [`docs/privacy-ambient.md`](docs/privacy-ambient.md).
+
+```bash
+mind-link context set project_name "our collab"
+mind-link context private "personal note — never shared"
+mind-link preview-share harshal   # shows ONLY what their agent would get
+```
+
 ## Security
 
 - Confirm before first send (and always for money / legal / medical / reputation).
