@@ -465,6 +465,29 @@ async function handleApi(
     return json({ invite: inv });
   }
 
+  // Open claim: Hermes (or user) posts chat_id + pair code. No CF webhook needed.
+  if (path === "/v1/telegram/claim-open" && req.method === "POST") {
+    const body = await readJson(req);
+    const code = String(body.code || "").trim().toUpperCase().replace(/^LINK_/, "");
+    const chatId = String(body.chat_id || "").trim();
+    const username = body.username != null ? String(body.username) : null;
+    if (!code || !chatId) return bad("code and chat_id required");
+    const pair = await env.DB.prepare("SELECT agent_id, expires_at FROM pair_codes WHERE code = ?")
+      .bind(code).first<{ agent_id: string; expires_at: number }>();
+    if (!pair || pair.expires_at < now()) return bad("invalid or expired code", 410);
+    await env.DB.prepare(
+      "UPDATE agents SET telegram_chat_id = ?, telegram_username = ?, updated_at = ? WHERE agent_id = ?"
+    ).bind(chatId, username, now(), pair.agent_id).run();
+    await env.DB.prepare("DELETE FROM pair_codes WHERE code = ?").bind(code).run();
+    if (env.TELEGRAM_BOT_TOKEN) {
+      await tgApi(env, "sendMessage", {
+        chat_id: chatId,
+        text: "Mind-link linked ✓ Mind-mail will arrive here.",
+      });
+    }
+    return json({ ok: true, agent_id: pair.agent_id });
+  }
+
   if (path === "/v1/status" && req.method === "GET") {
     return json({
       telegram: !!env.TELEGRAM_BOT_TOKEN,
