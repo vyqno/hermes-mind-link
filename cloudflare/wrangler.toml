@@ -16,3 +16,9 @@ database_id = "a09607ad-6bd0-4239-93be-f85d0bf4f1e4"
 [vars]
 APP_NAME = "Mind-link"
 PUBLIC_ORIGIN = "https://hermes-mind-link.vyqno-xyz.workers.dev"
+# Set after creating the platform bot (no @)
+# TELEGRAM_BOT_USERNAME = "YourMindLinkBot"
+
+# We deliver — users never poll
+[triggers]
+crons = ["* * * * *"]
