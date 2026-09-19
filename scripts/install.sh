@@ -12,25 +12,27 @@ cp "$ROOT/templates/trust.yaml" "$ML/trust.yaml.example"
 if [[ ! -f "$ML/trust.yaml" ]]; then
   cp "$ROOT/templates/trust.yaml" "$ML/trust.yaml"
   chmod 600 "$ML/trust.yaml" || true
-  echo "Created $ML/trust.yaml — edit self.agent_id and links."
-else
-  echo "Kept existing $ML/trust.yaml (example at trust.yaml.example)"
+fi
+cp "$ROOT/templates/a2a_agents.snippet.yaml" "$ML/a2a_agents.snippet.yaml" 2>/dev/null || true
+cp "$ROOT/templates/SOUL.mind-link.md" "$ML/SOUL.mind-link.md" 2>/dev/null || true
+
+# Install CLI into Hermes venv when present
+if [[ -x "$HERMES_HOME/hermes-agent/venv/bin/pip" ]]; then
+  "$HERMES_HOME/hermes-agent/venv/bin/pip" install -e "$ROOT" -q || true
+elif command -v pip3 >/dev/null 2>&1; then
+  pip3 install -e "$ROOT" --user -q 2>/dev/null || pip3 install -e "$ROOT" -q 2>/dev/null || true
 fi
 
-cp "$ROOT/templates/a2a_agents.snippet.yaml" "$ML/a2a_agents.snippet.yaml"
-cp "$ROOT/templates/SOUL.mind-link.md" "$ML/SOUL.mind-link.md"
-cp "$ROOT/docs/instinct-vs-open-agents.md" "$ML/instinct-vs-open-agents.md" 2>/dev/null || true
-
-# optional pip install for CLI
-if command -v pip3 >/dev/null 2>&1; then
-  pip3 install -e "$ROOT" --quiet 2>/dev/null || pip3 install -e "$ROOT" --user --quiet || true
+# Default hub URL if missing
+ENVF="$HERMES_HOME/.env"
+touch "$ENVF"
+if ! grep -q '^MINDLINK_HUB_URL=' "$ENVF" 2>/dev/null; then
+  echo 'MINDLINK_HUB_URL=https://hermes-mind-link.vyqno-xyz.workers.dev' >> "$ENVF"
 fi
 
 echo ""
-echo "Mind-link installed into $HERMES_HOME"
-echo "Next:"
-echo "  1. Edit $ML/trust.yaml"
-echo "  2. hermes tools enable a2a --platform telegram"
-echo "  3. Append $ML/SOUL.mind-link.md into your SOUL.md (optional)"
-echo "  4. mind-link validate   # if CLI installed"
-echo "  5. Restart gateway / new chat so skill loader sees mind-link"
+echo "Mind-link installed → $HERMES_HOME"
+echo "Next (once per machine):"
+echo "  mind-link connect"
+echo "Then restart Hermes gateway / open a new chat and work normally."
+echo "Agents mesh via hub; work instincts only by default."

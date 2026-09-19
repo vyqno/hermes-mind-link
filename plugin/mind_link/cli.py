@@ -79,7 +79,7 @@ def main(argv=None) -> int:
     hub = sub.add_parser("hub", help="Public HTTPS mind-link hub (no VPN between friends)")
     hub.add_argument(
         "--url",
-        default=os.environ.get("MINDLINK_HUB_URL", "http://127.0.0.1:8787"),
+        default=os.environ.get("MINDLINK_HUB_URL", "https://hermes-mind-link.vyqno-xyz.workers.dev"),
         help="Hub base URL",
     )
     hub.add_argument(
@@ -101,7 +101,26 @@ def main(argv=None) -> int:
     hg.add_argument("--group-id", required=True)
     hg.add_argument("--members", required=True, help="Comma-separated mind: ids")
 
+    cn = sub.add_parser("connect", help="Production: link this Hermes to the hub (device OAuth)")
+    cn.add_argument("--url", default=os.environ.get("MINDLINK_HUB_URL", "https://hermes-mind-link.vyqno-xyz.workers.dev"))
+    cn.add_argument("--token", default=None, help="Skip browser if you already have a hub token")
+    cn.add_argument("--no-browser", action="store_true")
+
+    sy = sub.add_parser("sync", help="Refresh trust.yaml from hub contacts")
+    sy.add_argument("--url", default=os.environ.get("MINDLINK_HUB_URL"))
+    sy.add_argument("--token", default=os.environ.get("MINDLINK_HUB_TOKEN"))
+
     args = p.parse_args(argv)
+
+    if args.cmd == "connect":
+        from .connect import connect as do_connect
+
+        return do_connect(hub_url=args.url, token=args.token, open_browser=not args.no_browser)
+
+    if args.cmd == "sync":
+        from .connect import sync_trust
+
+        return sync_trust(hub_url=args.url, token=args.token)
 
     if args.cmd == "hub":
         client = HubClient(args.url, token=args.token)

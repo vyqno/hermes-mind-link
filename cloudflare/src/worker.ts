@@ -201,7 +201,8 @@ async function deliverPending(env: Env, limit = 40): Promise<number> {
 
 
 /** Instinct-like ambient routing: detect people + ownership language in free text. */
-const OWNERSHIP_RE = /\b(harshal'?s|his|her|their)\s+(thing|problem|job|task|call|area|lane|ownership|api|contract)\b|\b(assign|hand\s*off|hand\s*over|belongs?\s+to|owner\s+is|should\s+drive|is\s+for)\b|\bthis\s+is\s+(\w+)'?s\b/i;
+const OWNERSHIP_RE =
+  /\b(his|her|their)\s+(thing|problem|job|task|call|area|lane|ownership|api|contract)\b|\b(assign|hand\s*off|hand\s*over|belongs?\s+to|owner\s+is|should\s+drive|is\s+for)\b|\bthis\s+is\s+([a-z0-9_]+)'?s\b/i;
 const NAME_HINT_RE = /\b([A-Z][a-z]{2,})\b/g;
 
 function scrubWorkText(text: string): string {
@@ -316,6 +317,12 @@ export default {
       return json({ ok: true });
     }
 
+    // Manual / cron-friendly poll when Telegram cannot setWebhook on workers.dev
+    if (path === "/telegram/poll" && (req.method === "POST" || req.method === "GET")) {
+      const n = await pollTelegramUpdates(env);
+      return json({ ok: true, processed: n, mode: "getUpdates" });
+    }
+
     if (path.startsWith("/v1/") || path.startsWith("/api/")) {
       const p = path.replace(/^\/api/, "/v1");
       try {
@@ -330,11 +337,65 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(deliverPending(env, 80));
-  },
-};
+      // Telegram often fails setWebhook DNS on *.workers.dev — poll getUpdates instead.
+      ctx.waitUntil(
+        (async () => {
+          await pollTelegramUpdates(env);
+          await deliverPending(env, 80);
+        })()
+      );
+    },
+  };
 
-async function handleTelegramUpdate(env: Env, update: Json) {
+  /** Persist bot update offset so /start pair codes are claimed without webhook. */
+  async function ensureMeta(env: Env) {
+    await env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS hub_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)"
+    ).run();
+  }
+
+  async function metaGet(env: Env, k: string): Promise<string | null> {
+    await ensureMeta(env);
+    const row = await env.DB.prepare("SELECT v FROM hub_meta WHERE k = ?").bind(k).first<{ v: string }>();
+    return row?.v ?? null;
+  }
+
+  async function metaSet(env: Env, k: string, v: string) {
+    await ensureMeta(env);
+    await env.DB.prepare(
+      "INSERT INTO hub_meta(k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+    )
+      .bind(k, v)
+      .run();
+  }
+
+  async function pollTelegramUpdates(env: Env): Promise<number> {
+    if (!env.TELEGRAM_BOT_TOKEN) return 0;
+    const raw = await metaGet(env, "tg_update_offset");
+    let offset = raw ? Number(raw) : 0;
+    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+    const r = await fetch(
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates?offset=${offset}&limit=50&timeout=0`
+    );
+    const data: any = await r.json().catch(() => null);
+    if (!data?.ok || !Array.isArray(data.result)) return 0;
+    let n = 0;
+    let maxId = offset - 1;
+    for (const update of data.result) {
+      const id = Number(update.update_id);
+      if (Number.isFinite(id) && id > maxId) maxId = id;
+      try {
+        await handleTelegramUpdate(env, update);
+        n++;
+      } catch {
+        /* keep polling */
+      }
+    }
+    if (maxId >= offset) await metaSet(env, "tg_update_offset", String(maxId + 1));
+    return n;
+  }
+
+  async function handleTelegramUpdate(env: Env, update: Json) {
   const msg: any = update.message || update.edited_message;
   if (!msg?.chat?.id) return;
   const chatId = String(msg.chat.id);
@@ -343,11 +404,17 @@ async function handleTelegramUpdate(env: Env, update: Json) {
 
   if (text.startsWith("/start")) {
     const payload = text.split(/\s+/)[1] || "";
-    const code = payload.replace(/^link[_-]?/i, "").toUpperCase();
+    // Accept: link_ABC / LINK-ABC / bare ABC from deep link or pasted command
+    const code = payload.replace(/^link[_-]?/i, "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
     if (!code) {
       await tgApi(env, "sendMessage", {
         chat_id: chatId,
-        text: "Open Mind-link → Connect Telegram, then use the button.",
+        text:
+          "No pair code in that /start.\n\n" +
+          "1) Open https://hermes-mind-link.vyqno-xyz.workers.dev\n" +
+          "2) Log in → Telegram → Open Telegram to link\n" +
+          "3) That button sends /start link_XXXX (the code is in the link, not after Start).\n\n" +
+          "Or paste the full line the website shows, e.g.\n/start link_ABCD1234",
       });
       return;
     }
@@ -558,6 +625,160 @@ async function handleApi(
       .first();
     if (!inv) return bad("not found", 404);
     return json({ invite: inv });
+  }
+
+  // Device OAuth — Hermes CLI `mind-link connect`
+  if (path === "/v1/device/code" && req.method === "POST") {
+    await ensureDeviceTable(env);
+    const deviceCode = token();
+    const userCode = inviteCode().slice(0, 6);
+    const t = now();
+    await env.DB.prepare(
+      `INSERT INTO device_codes(device_code,user_code,agent_id,token_hash,status,expires_at,created_at)
+       VALUES (?,?,NULL,NULL,'pending',?,?)`
+    )
+      .bind(deviceCode, userCode, t + 900, t)
+      .run();
+    const origin = originOf(req, env);
+    return json({
+      device_code: deviceCode,
+      user_code: userCode,
+      verification_uri: `${origin}/?p=device&code=${userCode}`,
+      verification_uri_complete: `${origin}/?p=device&code=${userCode}`,
+      expires_in: 900,
+      interval: 3,
+    });
+  }
+
+  if (path === "/v1/device/token" && req.method === "POST") {
+    await ensureDeviceTable(env);
+    const body = await readJson(req);
+    const dc = String(body.device_code || "").trim();
+    if (!dc) return bad("device_code required");
+    const row = await env.DB.prepare("SELECT * FROM device_codes WHERE device_code=?")
+      .bind(dc)
+      .first<any>();
+    if (!row) return bad("unknown device_code", 404);
+    if (row.expires_at < now()) return bad("expired", 410);
+    if (row.status === "pending") return json({ error: "authorization_pending" }, 428);
+    if (row.status !== "approved" || !row.agent_id) return bad("denied", 403);
+    const tok = token();
+    const th = await sha256(tok);
+    await env.DB.prepare("UPDATE agents SET token_hash=?, updated_at=? WHERE agent_id=?")
+      .bind(th, now(), row.agent_id)
+      .run();
+    await env.DB.prepare("UPDATE device_codes SET status='consumed' WHERE device_code=?")
+      .bind(dc)
+      .run();
+    const me = await env.DB.prepare("SELECT agent_id, display_name, handle FROM agents WHERE agent_id=?")
+      .bind(row.agent_id)
+      .first();
+    return json({
+      access_token: tok,
+      token_type: "bearer",
+      agent_id: row.agent_id,
+      me,
+      hub_url: originOf(req, env),
+    });
+  }
+
+  if (path === "/v1/device/approve" && req.method === "POST") {
+    await ensureDeviceTable(env);
+    const who = await authAgent(env, req);
+    if (!who) return bad("unauthorized", 401);
+    const body = await readJson(req);
+    const userCode = String(body.user_code || body.code || "")
+      .trim()
+      .toUpperCase();
+    if (!userCode) return bad("user_code required");
+    const row = await env.DB.prepare(
+      "SELECT * FROM device_codes WHERE user_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1"
+    )
+      .bind(userCode)
+      .first<any>();
+    if (!row || row.expires_at < now()) return bad("invalid or expired code", 410);
+    await env.DB.prepare("UPDATE device_codes SET status='approved', agent_id=? WHERE device_code=?")
+      .bind(who, row.device_code)
+      .run();
+    return json({ ok: true, agent_id: who, user_code: userCode });
+  }
+
+  if (path === "/v1/auth/telegram" && req.method === "POST") {
+    await ensureDeviceTable(env);
+    const body = await readJson(req);
+    const data: Record<string, string> = {};
+    for (const [k, v] of Object.entries(body)) if (v != null) data[k] = String(v);
+    if (!(await verifyTelegramLogin(env, data))) return bad("invalid telegram login", 401);
+    const tgId = String(data.id || "");
+    const username = data.username || null;
+    const display =
+      [data.first_name, data.last_name].filter(Boolean).join(" ") || username || `user${tgId.slice(-4)}`;
+    let handle = (username || `tg${tgId.slice(-6)}`).toLowerCase().replace(/[^a-z0-9_]/g, "");
+    const t = now();
+    const link = await env.DB.prepare("SELECT agent_id FROM oauth_links WHERE telegram_id=?")
+      .bind(tgId)
+      .first<{ agent_id: string }>();
+    let agentId = link?.agent_id;
+    let tok: string | undefined;
+    if (!agentId) {
+      const existing = await env.DB.prepare("SELECT agent_id FROM agents WHERE telegram_chat_id=?")
+        .bind(tgId)
+        .first<{ agent_id: string }>();
+      agentId = existing?.agent_id;
+      if (!agentId) {
+        if (
+          await env.DB.prepare("SELECT 1 FROM agents WHERE handle=? OR agent_id=?")
+            .bind(handle, `mind:${handle}`)
+            .first()
+        ) {
+          handle = handle + id(2);
+        }
+        agentId = `mind:${handle}`;
+        tok = token();
+        const th = await sha256(tok);
+        await env.DB.prepare(
+          `INSERT INTO agents(agent_id,display_name,handle,token_hash,telegram_bot,telegram_chat_id,telegram_username,created_at,updated_at)
+           VALUES (?,?,?,?,NULL,?,?,?,?)`
+        )
+          .bind(agentId, display, handle, th, tgId, username, t, t)
+          .run();
+        await env.DB.prepare(`INSERT INTO work_context(agent_id,fields_json,updated_at) VALUES (?,'{}',?)`)
+          .bind(agentId, t)
+          .run();
+      }
+      await env.DB.prepare(
+        `INSERT INTO oauth_links(telegram_id,agent_id,updated_at) VALUES (?,?,?)
+         ON CONFLICT(telegram_id) DO UPDATE SET agent_id=excluded.agent_id, updated_at=excluded.updated_at`
+      )
+        .bind(tgId, agentId, t)
+        .run();
+    }
+    if (!tok) {
+      tok = token();
+      const th = await sha256(tok);
+      await env.DB.prepare(
+        "UPDATE agents SET token_hash=?, telegram_chat_id=?, telegram_username=?, display_name=COALESCE(?, display_name), updated_at=? WHERE agent_id=?"
+      )
+        .bind(th, tgId, username, display, t, agentId)
+        .run();
+    }
+    const origin = originOf(req, env);
+    return json(
+      { ok: true, agent_id: agentId, token: tok, display_name: display, next: "ready" },
+      200,
+      { "set-cookie": sessionCookie(tok!, origin) }
+    );
+  }
+
+  if (path === "/v1/hermes/bootstrap" && req.method === "GET") {
+    const origin = originOf(req, env);
+    return json({
+      hub_url: origin,
+      bot_username: env.TELEGRAM_BOT_USERNAME || null,
+      telegram: !!env.TELEGRAM_BOT_TOKEN,
+      connect: { cli: "mind-link connect", device: `${origin}/v1/device/code` },
+      privacy: { default: "work_only", deny: DEFAULT_DENY },
+    });
   }
 
   // Open claim: Hermes (or user) posts chat_id + pair code. No CF webhook needed.
@@ -1027,9 +1248,48 @@ async function handleApi(
 
 
   if (path === "/v1/setup-pack" && req.method === "GET") {
+    const me = await env.DB.prepare(
+      "SELECT agent_id, display_name, handle, telegram_chat_id, telegram_username FROM agents WHERE agent_id=?"
+    )
+      .bind(agent)
+      .first();
+    const contacts = await loadContacts(env, agent);
+    const origin = originOf(req, env);
+    const trust = {
+      version: 2,
+      self: {
+        agent_id: agent,
+        surface: "telegram",
+        ambient_default: true,
+        hub_url: origin,
+      },
+      links: contacts.map((c) => ({
+        id: String(c.peer_agent).replace(/^mind:/, ""),
+        display_name: c.display_name,
+        status: c.status || "active",
+        agent: { kind: "hub", ref: c.peer_agent },
+        delivery_default: "agent",
+        share: (() => {
+          try {
+            return JSON.parse(c.share_json || "{}");
+          } catch {
+            return defaultShare(c.share_mode || "work_only");
+          }
+        })(),
+      })),
+    };
     return json({
-      note: "Optional power-user only. Normal users just Connect Telegram in the app — we deliver.",
-      hermes_cli_required: false,
+      env: {
+        MINDLINK_HUB_URL: origin,
+        MINDLINK_HUB_TOKEN: "(keep the token already on this device / from connect)",
+      },
+      me,
+      trust,
+      hermes: {
+        install: "curl -fsSL https://hermes-mind-link.vyqno-xyz.workers.dev/install.sh | bash",
+        connect: "mind-link connect",
+        note: "Connect once; Hermes keeps working. Agents exchange work instincts via hub.",
+      },
     });
   }
 
@@ -1039,4 +1299,46 @@ async function handleApi(
   }
 
   return bad("not found", 404);
+}
+
+/** Telegram Login Widget auth (HMAC-SHA-256 of bot token). */
+async function verifyTelegramLogin(env: Env, data: Record<string, string>): Promise<boolean> {
+  if (!env.TELEGRAM_BOT_TOKEN) return false;
+  const hash = data.hash;
+  if (!hash) return false;
+  const pairs = Object.keys(data)
+    .filter((k) => k !== "hash")
+    .sort()
+    .map((k) => `${k}=${data[k]}`);
+  const check = pairs.join("\n");
+  const enc = new TextEncoder();
+  const keyData = await crypto.subtle.digest("SHA-256", enc.encode(env.TELEGRAM_BOT_TOKEN));
+  const key = await crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(check));
+  const hex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (hex !== hash) return false;
+  const authDate = Number(data.auth_date || 0);
+  if (!authDate || now() - authDate > 86400) return false;
+  return true;
+}
+
+async function ensureDeviceTable(env: Env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS device_codes (
+      device_code TEXT PRIMARY KEY,
+      user_code TEXT NOT NULL,
+      agent_id TEXT,
+      token_hash TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      expires_at REAL NOT NULL,
+      created_at REAL NOT NULL
+    )`
+  ).run();
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS oauth_links (
+      telegram_id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      updated_at REAL NOT NULL
+    )`
+  ).run();
 }

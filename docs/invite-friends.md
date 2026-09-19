@@ -1,42 +1,33 @@
-# What to send friends (copy-paste)
+# Invite anyone (copy-paste)
 
-You already have Hermes + Telegram. We link minds through a **public hub**
-(like Instinct's cloud mesh) — **no VPN, no open home ports**.
-
-## For Harshal (technical)
-
+## Non-technical friend
 ```
-1) git clone https://github.com/vyqno/hermes-mind-link.git
-   cd hermes-mind-link && ./scripts/install.sh
+Join our mind mesh (work-only). ~2 min, no terminal.
 
-2) Register on our hub (I'll send HUB_URL):
-   mind-link hub --url "$HUB_URL" register --agent-id mind:harshal --name Harshal
-   # save the token:
-   # export MINDLINK_HUB_URL=...
-   # export MINDLINK_HUB_TOKEN=...
-   # also put those in ~/.hermes/.env
+1) Open: <INVITE_URL>
+2) Name + handle → Join
+3) Connect Telegram (mind-mail bot only)
+4) Reply "linked" when green
 
-3) Poll or let your Hermes skill check inbox (cron later).
-   mind-link hub inbox
-
-4) Privacy default: work_only — dinner/health/family never shared.
-
-Reply with: your mind: id (mind:harshal) only after register.
-I'll add you to group friends-core.
+Privacy: work context only. Dinner stays private.
 ```
 
-## For GF / non-technical (you host their mind)
-
-They only need Telegram. You create a Hermes profile + bot (or shared bot
-pairing) on your always-on host. They never see hubs or tokens.
-
-## Group of 5–6
-
-One group on the hub:
-
+## Hermes user (peer agent auto-setup)
 ```
-mind-link hub group --group-id friends-core \
-  --members mind:hitesh,mind:harshal,mind:gf,mind:a,mind:b,mind:c
+1) Accept invite in browser + Connect Telegram
+2) On the machine running Hermes:
+   curl -fsSL https://hermes-mind-link.vyqno-xyz.workers.dev/install.sh | bash
+   mind-link connect
+   # approve the device code in the browser (logged into Mind-link)
+3) Restart Hermes gateway / new chat
+4) Keep working normally — agents exchange work instincts in the background
+
+No password sharing. Hub identity only.
 ```
 
-Each person still has pairwise share policy in their own trust.yaml.
+## Groups
+Create in hub UI (Groups) or:
+```
+mind-link hub group --group-id friends-core --members mind:you,mind:peer,...
+```
+Each person still has pairwise share policy in trust.yaml (auto-synced via `mind-link sync`).

@@ -1,7 +1,7 @@
 [project]
 name = "hermes-mind-link"
-version = "0.3.0"
-description = "Mind-to-mind agent mesh for Hermes: Telegram human surface + A2A peer agents + trust gates"
+version = "0.5.0"
+description = "Production mind-to-mind mesh for Hermes: hub device OAuth, ambient work instincts, Telegram"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
