@@ -199,6 +199,101 @@ async function deliverPending(env: Env, limit = 40): Promise<number> {
   return n;
 }
 
+
+/** Instinct-like ambient routing: detect people + ownership language in free text. */
+const OWNERSHIP_RE = /\b(harshal'?s|his|her|their)\s+(thing|problem|job|task|call|area|lane|ownership|api|contract)\b|\b(assign|hand\s*off|hand\s*over|belongs?\s+to|owner\s+is|should\s+drive|is\s+for)\b|\bthis\s+is\s+(\w+)'?s\b/i;
+const NAME_HINT_RE = /\b([A-Z][a-z]{2,})\b/g;
+
+function scrubWorkText(text: string): string {
+  const lines = text.split(/\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    if (/\b(dinner|lunch|breakfast|password|otp|girlfriend|boyfriend|salary)\b/i.test(line)) {
+      out.push("[redacted-personal]");
+    } else out.push(line);
+  }
+  return out.join("\n").trim();
+}
+
+function classifyAmbient(text: string): { intent: string; work: boolean } {
+  const t = text.toLowerCase();
+  if (/\b(dinner|lunch|health|family|password)\b/.test(t)) return { intent: "blocked_personal", work: false };
+  if (OWNERSHIP_RE.test(text) || /\b(blocked|blocker|deadline|ship|deploy|api|pr\b|task)\b/i.test(text))
+    return { intent: "ownership_or_work", work: true };
+  if (/\b(schedule|meet|available|calendar)\b/i.test(text)) return { intent: "schedule", work: true };
+  return { intent: "relay", work: true };
+}
+
+async function loadContacts(env: Env, owner: string): Promise<any[]> {
+  const rows = await env.DB.prepare(
+    `SELECT c.*, a.handle AS peer_handle, a.telegram_chat_id AS peer_tg
+     FROM contacts c LEFT JOIN agents a ON a.agent_id = c.peer_agent
+     WHERE c.owner_agent = ? AND c.status = 'active'`
+  ).bind(owner).all();
+  return (rows.results || []) as any[];
+}
+
+function matchContacts(text: string, contacts: any[]): any[] {
+  const lower = text.toLowerCase();
+  const hits: any[] = [];
+  for (const c of contacts) {
+    const names = [
+      c.display_name,
+      c.peer_handle,
+      String(c.peer_agent || "").replace(/^mind:/, ""),
+    ]
+      .filter(Boolean)
+      .map((s: string) => String(s).toLowerCase());
+    // aliases in notes as "aliases: a,b"
+    const am = /aliases?:\s*([^\n]+)/i.exec(c.notes || "");
+    if (am) names.push(...am[1].split(/[,/]/).map((x) => x.trim().toLowerCase()).filter(Boolean));
+    for (const n of names) {
+      if (n.length >= 3 && lower.includes(n)) {
+        hits.push(c);
+        break;
+      }
+    }
+  }
+  // "this is X's thing"
+  const m = /\bthis\s+is\s+([a-z0-9_]+)'?s\b/i.exec(text);
+  if (m) {
+    const n = m[1].toLowerCase();
+    for (const c of contacts) {
+      const bag = `${c.display_name} ${c.peer_handle} ${c.peer_agent}`.toLowerCase();
+      if (bag.includes(n) && !hits.includes(c)) hits.push(c);
+    }
+  }
+  return hits;
+}
+
+async function sendEnvelope(
+  env: Env,
+  ctx: ExecutionContext,
+  from: string,
+  to: string,
+  envelope: string,
+  groupId: string | null = null
+): Promise<string> {
+  const mid = id(12);
+  const exp = now() + 86400;
+  await env.DB.prepare(
+    `INSERT INTO messages(id,to_agent,from_agent,group_id,envelope,created_at,expires_at,delivered,notified)
+     VALUES (?,?,?,?,?,?,?,0,0)`
+  )
+    .bind(mid, to, from, groupId, envelope, now(), exp)
+    .run();
+  ctx.waitUntil(
+    (async () => {
+      const ok = await notifyTelegram(env, to, from, envelope, groupId);
+      await env.DB.prepare("UPDATE messages SET notified=1, delivered=? WHERE id=?")
+        .bind(ok ? 1 : 0, mid)
+        .run();
+    })()
+  );
+  return mid;
+}
+
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
@@ -806,6 +901,130 @@ async function handleApi(
       .run();
     return json({ ok: true, fields });
   }
+
+  
+  // --- Instinct ambient: think / route / send ---
+  if (path === "/v1/ambient/analyze" && req.method === "POST") {
+    const body = await readJson(req);
+    const text = String(body.text || "");
+    if (!text.trim()) return bad("text required");
+    const contacts = await loadContacts(env, agent);
+    const matches = matchContacts(text, contacts);
+    const cls = classifyAmbient(text);
+    return json({
+      classification: cls,
+      matches: matches.map((c) => ({
+        peer_agent: c.peer_agent,
+        display_name: c.display_name,
+        share_mode: c.share_mode,
+        telegram_linked: !!c.peer_tg,
+      })),
+      scrubbed: scrubWorkText(text),
+      would_block: !cls.work,
+    });
+  }
+
+  if (path === "/v1/ambient/think" && req.method === "POST") {
+    const body = await readJson(req);
+    const text = String(body.text || "").trim();
+    if (!text) return bad("text required");
+    const auto = body.auto === true || body.auto === "true";
+    const forceTo = body.to ? String(body.to) : null;
+    const contacts = await loadContacts(env, agent);
+    const cls = classifyAmbient(text);
+    if (!cls.work) {
+      return json({
+        ok: false,
+        reason: "personal_or_sensitive",
+        message: "Blocked: looks personal/sensitive. Not sent to any mind.",
+      });
+    }
+    let targets = forceTo
+      ? contacts.filter((c) => c.peer_agent === forceTo || c.peer_agent.endsWith(forceTo))
+      : matchContacts(text, contacts);
+    if (!targets.length) {
+      return json({
+        ok: false,
+        reason: "no_match",
+        message: "No trusted contact matched. Add them via Invite first.",
+        classification: cls,
+      });
+    }
+    // explicit_only contacts always need confirm unless body.confirm true
+    const confirm = body.confirm === true || body.confirm === "true";
+    const needConfirm = targets.some((c) => c.share_mode === "explicit_only") && !confirm && !auto;
+    // auto only for work_only + ownership language or body.auto with confirm path
+    const scrubbed = scrubWorkText(text);
+    if (needConfirm || (auto === false && body.confirm !== true && body.dry_run !== false && body.send !== true)) {
+      // default: return preview unless send:true
+      if (body.send !== true) {
+        return json({
+          ok: true,
+          preview: true,
+          classification: cls,
+          targets: targets.map((c) => c.display_name + " (" + c.peer_agent + ")"),
+          scrubbed,
+          message: "Preview only. Pass send:true to deliver to their agent(s).",
+        });
+      }
+    }
+    if (body.send !== true && !auto) {
+      return json({
+        ok: true,
+        preview: true,
+        classification: cls,
+        targets: targets.map((c) => ({ peer_agent: c.peer_agent, display_name: c.display_name })),
+        scrubbed,
+      });
+    }
+    // filter explicit_only without confirm
+    if (!confirm) {
+      targets = targets.filter((c) => c.share_mode !== "explicit_only");
+    }
+    if (!targets.length) {
+      return json({ ok: false, reason: "needs_confirm", message: "Contact requires confirm." });
+    }
+    const me = await env.DB.prepare("SELECT display_name FROM agents WHERE agent_id=?")
+      .bind(agent)
+      .first<{ display_name: string }>();
+    const ids: string[] = [];
+    for (const c of targets) {
+      const envelope =
+        `[MIND-LINK]\nfrom: ${agent}\nto: ${c.peer_agent}\nintent: ${cls.intent}\n` +
+        `correlation_id: ${id(3)}\nrequires_human_on_receipt: true\n---\n` +
+        `From ${me?.display_name || agent}'s mind (work context):\n\n${scrubbed}\n`;
+      ids.push(await sendEnvelope(env, ctx, agent, c.peer_agent, envelope, null));
+    }
+    return json({
+      ok: true,
+      sent: true,
+      message_ids: ids,
+      targets: targets.map((c) => c.display_name),
+      note: "Delivered to their agent(s). They get a Telegram ping if linked.",
+    });
+  }
+
+  if (path === "/v1/compose" && req.method === "POST") {
+    // Explicit message to one contact's agent — UI composer
+    const body = await readJson(req);
+    const to = String(body.to || "");
+    const text = scrubWorkText(String(body.text || ""));
+    if (!to || !text) return bad("to and text required");
+    const c = (await loadContacts(env, agent)).find(
+      (x) => x.peer_agent === to || x.peer_agent.endsWith(to.replace(/^mind:/, ""))
+    );
+    if (!c) return bad("not a contact", 404);
+    const me = await env.DB.prepare("SELECT display_name FROM agents WHERE agent_id=?")
+      .bind(agent)
+      .first<{ display_name: string }>();
+    const envelope =
+      `[MIND-LINK]\nfrom: ${agent}\nto: ${c.peer_agent}\nintent: relay\n` +
+      `correlation_id: ${id(3)}\nrequires_human_on_receipt: true\n---\n` +
+      `From ${me?.display_name || agent}'s mind:\n\n${text}\n`;
+    const mid = await sendEnvelope(env, ctx, agent, c.peer_agent, envelope, null);
+    return json({ ok: true, message_id: mid, to: c.peer_agent, display_name: c.display_name });
+  }
+
 
   if (path === "/v1/setup-pack" && req.method === "GET") {
     return json({

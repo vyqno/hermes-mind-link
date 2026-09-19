@@ -1,9 +1,8 @@
-/* Mind-link UI — zero friction: create → connect Telegram → invite. No CLI. */
+/* Mind-link — Instinct-parity UI. No terminal. Telegram + browser only. */
 const S = {
   token: localStorage.getItem("ml_token") || "",
   me: null,
   page: "home",
-  status: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -31,7 +30,7 @@ function route(page, params = {}) {
   S.me = null;
   const u = new URL(location.href);
   u.searchParams.set("p", page);
-  if (!params.invite && page !== "accept") u.searchParams.delete("invite");
+  if (page !== "accept") u.searchParams.delete("invite");
   Object.entries(params).forEach(([k, v]) =>
     v == null ? u.searchParams.delete(k) : u.searchParams.set(k, v)
   );
@@ -54,30 +53,20 @@ function esc(s) {
 function renderNav() {
   const items = S.token
     ? [
-        ["home", "Home"],
-        ["dashboard", "Home"],
-        ["telegram", "Telegram"],
-        ["contacts", "Contacts"],
-        ["invites", "Invite"],
-        ["groups", "Groups"],
+        ["think", "Think"],
         ["inbox", "Inbox"],
-        ["context", "Work"],
+        ["contacts", "People"],
+        ["invites", "Invite"],
+        ["telegram", "Telegram"],
+        ["groups", "Groups"],
+        ["context", "Work board"],
       ]
     : [
         ["home", "Home"],
         ["onboard", "Get started"],
         ["login", "Log in"],
       ];
-  // de-dupe dashboard/home label
-  const seen = new Set();
-  const clean = [];
-  for (const [id, label] of items) {
-    if (S.token && id === "home") continue;
-    if (seen.has(label)) continue;
-    seen.add(label);
-    clean.push([id, label]);
-  }
-  nav().innerHTML = clean
+  nav().innerHTML = items
     .map(
       ([id, label]) =>
         `<button class="${S.page === id ? "active" : ""}" onclick="route('${id}')">${label}</button>`
@@ -102,21 +91,22 @@ async function ensureMe() {
 function homeView() {
   return `
   <section class="hero">
-    <h1>Text your mind.<br/>It talks to theirs.</h1>
+    <h1>Your mind talks to their mind.<br/>No apps to learn. No terminal.</h1>
     <p>
-      Like Instinct — but open. You only use Telegram after a 30-second signup.
-      No CLI, no VPN, no “save this poll yourself.” We deliver mind-mail for you.
+      Instinct-style trusted connections — open, on Cloudflare.
+      Think out loud. We detect people like Harshal, send <strong>their agent</strong> work context only,
+      and ping them on Telegram. Dinner stays private.
     </p>
     <div class="actions">
-      <button class="btn primary" onclick="route('onboard')">Get started free</button>
+      <button class="btn primary" onclick="route('onboard')">Get started</button>
       ${qs("invite") ? `<button class="btn" onclick="route('accept')">Accept invite</button>` : `<button class="btn" onclick="route('login')">Log in</button>`}
     </div>
   </section>
   <div class="grid">
-    <div class="card"><h3>1. Create mind</h3><p>Name + handle. Session saved automatically.</p></div>
-    <div class="card"><h3>2. Connect Telegram</h3><p>One button → open bot → done.</p></div>
-    <div class="card"><h3>3. Invite people</h3><p>Share a link. GF / friends / group of 6.</p></div>
-    <div class="card"><h3>Privacy default</h3><p>Work only. Dinner & personal stay private.</p></div>
+    <div class="card"><h3>Think</h3><p>“This is Harshal’s thing” → his agent, not a random DM dump.</p></div>
+    <div class="card"><h3>Telegram</h3><p>One link. Friends never open a terminal.</p></div>
+    <div class="card"><h3>Privacy</h3><p>Work only by default. You control each person.</p></div>
+    <div class="card"><h3>Groups</h3><p>5–6 friends, same mesh, pairwise rules.</p></div>
   </div>`;
 }
 
@@ -124,21 +114,17 @@ function onboardView() {
   return `
   <div class="panel">
     <h2>Create your mind</h2>
-    <p class="muted">30 seconds. No install. No token homework — we keep you signed in.</p>
-    <label>Your name</label>
-    <input id="ob_name" placeholder="Hitesh" autocomplete="name" />
+    <p class="muted">Name + handle. Signed in automatically. No tokens to copy.</p>
+    <label>Name</label>
+    <input id="ob_name" placeholder="Hitesh" />
     <label>Handle</label>
-    <input id="ob_handle" placeholder="hitesh" pattern="[a-z0-9_]+" />
-    <div class="actions">
-      <button class="btn primary" onclick="doRegister()">Continue</button>
-    </div>
+    <input id="ob_handle" placeholder="hitesh" />
+    <div class="actions"><button class="btn primary" onclick="doRegister()">Continue</button></div>
     <div id="ob_out"></div>
   </div>`;
 }
 
 async function doRegister() {
-  const out = $("#ob_out");
-  out.innerHTML = `<p class="muted">Creating…</p>`;
   try {
     const handle = $("#ob_handle").value.trim().toLowerCase();
     const data = await api("/v1/register", {
@@ -152,7 +138,7 @@ async function doRegister() {
     S.me = null;
     route("telegram");
   } catch (e) {
-    out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    $("#ob_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
   }
 }
 
@@ -160,8 +146,8 @@ function loginView() {
   return `
   <div class="panel">
     <h2>Log in</h2>
-    <p class="muted">Paste the token only if you cleared browser data. Normal users stay signed in.</p>
-    <textarea id="login_tok" placeholder="Token (optional recovery)"></textarea>
+    <p class="muted">Only if you cleared browser data.</p>
+    <textarea id="login_tok" placeholder="Recovery token"></textarea>
     <div class="actions"><button class="btn primary" onclick="doLogin()">Continue</button></div>
     <div id="login_out"></div>
   </div>`;
@@ -170,34 +156,32 @@ function loginView() {
 async function doLogin() {
   const t = $("#login_tok").value.trim();
   if (t) setToken(t);
-  S.me = null;
   try {
+    S.me = null;
     await ensureMe();
-    route("dashboard");
+    route("think");
   } catch (e) {
     $("#login_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
   }
 }
 
 function acceptView() {
-  const code = qs("invite") || "";
   return `
   <div class="panel">
     <h2>Join a trusted mind</h2>
-    <p class="muted">Accept invite → connect Telegram. That’s the whole onboarding.</p>
+    <p class="muted">Invite → Telegram. Zero terminal.</p>
     <label>Invite code</label>
-    <input id="ac_code" value="${esc(code)}" />
+    <input id="ac_code" value="${esc(qs("invite") || "")}" />
     <label>Your name</label>
-    <input id="ac_name" placeholder="Your name" />
+    <input id="ac_name" />
     <label>Handle</label>
-    <input id="ac_handle" placeholder="yourname" />
+    <input id="ac_handle" />
     <div class="actions"><button class="btn primary" onclick="doAccept()">Join</button></div>
     <div id="ac_out"></div>
   </div>`;
 }
 
 async function doAccept() {
-  const out = $("#ac_out");
   try {
     const data = await api("/v1/invites/accept", {
       method: "POST",
@@ -209,89 +193,147 @@ async function doAccept() {
     });
     if (data.token) setToken(data.token);
     S.me = null;
-    out.innerHTML = `<p class="ok">Linked with ${esc(data.linked_with)}</p>`;
-    setTimeout(() => route("telegram"), 400);
+    route("telegram");
+  } catch (e) {
+    $("#ac_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
+}
+
+async function thinkView() {
+  const data = await ensureMe();
+  const needTg = data.needs?.telegram;
+  const contacts = data.contacts || [];
+  const opts = contacts
+    .map((c) => `<option value="${esc(c.peer_agent)}">${esc(c.display_name)}</option>`)
+    .join("");
+  return `
+  ${
+    needTg
+      ? `<div class="panel" style="border-color:#0f766e;margin-bottom:14px">
+    <strong>Connect Telegram</strong> so pings actually land.
+    <button class="btn primary" style="margin-left:8px" onclick="route('telegram')">Connect</button>
+  </div>`
+      : ""
+  }
+  <div class="panel">
+    <h2>Think out loud</h2>
+    <p class="muted">Like Instinct: say “this is Harshal’s thing” — we match his mind, scrub personal stuff, send his <em>agent</em>.</p>
+    <textarea id="think_text" placeholder="e.g. This API ownership is Harshal's thing — he should drive the contract. I'm blocked until he decides."></textarea>
+    <div class="actions">
+      <button class="btn" onclick="analyzeThink()">Detect who</button>
+      <button class="btn primary" onclick="sendThink(false)">Preview</button>
+      <button class="btn primary" onclick="sendThink(true)">Send to their agent(s)</button>
+    </div>
+    <div id="think_out"></div>
+  </div>
+  <div class="panel">
+    <h2>Message one mind</h2>
+    <label>To</label>
+    <select id="compose_to"><option value="">Select contact</option>${opts}</select>
+    <label>Message</label>
+    <textarea id="compose_text" placeholder="Work context only…"></textarea>
+    <div class="actions"><button class="btn primary" onclick="composeSend()">Send to their agent</button></div>
+    <div id="compose_out"></div>
+  </div>`;
+}
+
+async function analyzeThink() {
+  const text = $("#think_text").value;
+  const out = $("#think_out");
+  try {
+    const data = await api("/v1/ambient/analyze", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    if (data.would_block) {
+      out.innerHTML = `<p class="err">Blocked as personal/sensitive. Nothing would send.</p>`;
+      return;
+    }
+    if (!data.matches?.length) {
+      out.innerHTML = `<p class="warn">No contact matched. Invite them under People first.</p>
+        <pre class="cmd">${esc(data.scrubbed)}</pre>`;
+      return;
+    }
+    out.innerHTML = `<p class="ok">Matched: ${data.matches.map((m) => esc(m.display_name)).join(", ")}</p>
+      <p class="muted">Intent: ${esc(data.classification.intent)} · TG linked: ${data.matches
+        .map((m) => (m.telegram_linked ? "yes" : "no"))
+        .join("/")}</p>
+      <pre class="cmd">${esc(data.scrubbed)}</pre>`;
   } catch (e) {
     out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
   }
 }
 
-async function dashboardView() {
-  const data = await ensureMe();
-  const me = data.me;
-  const needTg = data.needs?.telegram;
-  return `
-  <section class="hero">
-    <h1>Hi, ${esc(me.display_name)}</h1>
-    <p class="muted">${esc(me.agent_id)}</p>
-  </section>
-  ${
-    needTg
-      ? `<div class="panel" style="border-color:#0f766e">
-    <h2>Next: Connect Telegram</h2>
-    <p class="muted">This is the only setup step. After this, mind-mail arrives in Telegram automatically.</p>
-    <div class="actions"><button class="btn primary" onclick="route('telegram')">Connect Telegram</button></div>
-  </div>`
-      : `<div class="panel"><p class="ok">Telegram linked ✓</p>
-    <div class="actions">
-      <button class="btn primary" onclick="route('invites')">Invite someone</button>
-      <button class="btn" onclick="route('contacts')">Contacts</button>
-    </div></div>`
+async function sendThink(doSend) {
+  const text = $("#think_text").value;
+  const out = $("#think_out");
+  try {
+    const data = await api("/v1/ambient/think", {
+      method: "POST",
+      body: JSON.stringify({ text, send: doSend, confirm: true }),
+    });
+    if (data.preview) {
+      out.innerHTML = `<p class="warn">Preview → ${esc((data.targets || []).join(", ") || "nobody")}</p>
+        <pre class="cmd">${esc(data.scrubbed || "")}</pre>
+        <p class="muted">${esc(data.message || "Click Send to deliver.")}</p>`;
+      return;
+    }
+    if (!data.ok) {
+      out.innerHTML = `<p class="err">${esc(data.message || data.reason)}</p>`;
+      return;
+    }
+    out.innerHTML = `<p class="ok">Sent to agent(s): ${esc((data.targets || []).join(", "))}</p>
+      <p class="muted">They get a Telegram ping if linked. Not a raw dump of your private chat.</p>`;
+  } catch (e) {
+    out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
   }
-  <div class="grid" style="margin-top:14px">
-    <div class="card"><h3>Contacts</h3><p>${data.contacts.length} minds</p></div>
-    <div class="card"><h3>Groups</h3><p>${data.groups.length} circles</p></div>
-  </div>`;
+}
+
+async function composeSend() {
+  const out = $("#compose_out");
+  try {
+    const data = await api("/v1/compose", {
+      method: "POST",
+      body: JSON.stringify({
+        to: $("#compose_to").value,
+        text: $("#compose_text").value,
+      }),
+    });
+    out.innerHTML = `<p class="ok">Sent to ${esc(data.display_name)}'s agent</p>`;
+    $("#compose_text").value = "";
+  } catch (e) {
+    out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
 }
 
 async function telegramView() {
   const st = await api("/v1/telegram/status");
   if (st.linked) {
-    return `
-    <div class="panel">
-      <h2>Telegram connected ✓</h2>
-      <p class="ok">@${esc(st.telegram_username || "linked")}</p>
-      <p class="muted">Mind-mail is pushed here. You never run a poller or Hermes setup.</p>
-      <div class="actions">
-        <button class="btn primary" onclick="route('invites')">Invite friends</button>
-        <button class="btn" onclick="route('dashboard')">Done</button>
-      </div>
-    </div>`;
+    return `<div class="panel"><h2>Telegram linked ✓</h2>
+      <p class="ok">@${esc(st.telegram_username || "you")}</p>
+      <p class="muted">Mind-mail pushes here. Friends never use a terminal.</p>
+      <button class="btn primary" onclick="route('think')">Start thinking</button></div>`;
   }
   if (!st.platform_ready) {
-    return `
-    <div class="panel">
-      <h2>Almost ready</h2>
-      <p class="warn">Platform Telegram bot isn’t configured on the server yet.</p>
-      <p class="muted">Operator one-time: set Cloudflare secrets TELEGRAM_BOT_TOKEN + TELEGRAM_BOT_USERNAME, set webhook to /telegram/webhook. Users never see CLI.</p>
-      <p class="muted">You can still invite contacts and use the web inbox meanwhile.</p>
-      <div class="actions"><button class="btn" onclick="route('invites')">Continue to invites</button></div>
-    </div>`;
+    return `<div class="panel"><h2>Telegram</h2>
+      <p class="warn">Platform bot not ready on server.</p></div>`;
   }
-  return `
-  <div class="panel">
-    <h2>Connect Telegram</h2>
-    <p class="muted">One tap. Opens our bot. That’s it — no Hermes, no tokens to copy.</p>
-    <div class="actions">
-      <button class="btn primary" id="tg_btn" onclick="pairTelegram()">Open Telegram to link</button>
-    </div>
-    <div id="tg_out" class="muted" style="margin-top:12px"></div>
+  return `<div class="panel"><h2>Connect Telegram</h2>
+    <p class="muted">One button. Opens @${esc(st.bot_username)}. No setup pack.</p>
+    <button class="btn primary" onclick="pairTelegram()">Open Telegram to link</button>
+    <div id="tg_out"></div>
+    <button class="btn" style="margin-top:10px" onclick="route('telegram')">I’ve linked — refresh</button>
   </div>`;
 }
 
 async function pairTelegram() {
-  const out = $("#tg_out");
-  out.innerHTML = "Creating secure link…";
   try {
     const data = await api("/v1/telegram/pair", { method: "POST", body: "{}" });
-    out.innerHTML = `<p>Tap below on your phone. Link expires in 15 minutes.</p>
-      <div class="actions"><a class="btn primary" href="${esc(data.deep_link)}" target="_blank" rel="noreferrer">Open @ bot</a></div>
-      <p class="muted">After Telegram says Linked, come back — we’ll detect it.</p>
-      <div class="actions"><button class="btn" onclick="route('telegram')">I’ve linked — refresh</button></div>`;
-    // try open
+    $("#tg_out").innerHTML = `<p class="muted">Opens bot with one-time code.</p>
+      <a class="btn primary" href="${esc(data.deep_link)}" target="_blank" rel="noreferrer">Open bot</a>`;
     window.open(data.deep_link, "_blank");
   } catch (e) {
-    out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    $("#tg_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
   }
 }
 
@@ -300,29 +342,21 @@ async function contactsView() {
   const list =
     contacts
       .map(
-        (c) => `
-    <div class="item">
-      <div>
+        (c) => `<div class="item"><div>
         <strong>${esc(c.display_name)}</strong>
         <div class="muted">${esc(c.peer_agent)}</div>
-        <span class="pill ${esc(c.status)}">${esc(c.status)}</span>
         <span class="pill">${esc(c.share_mode)}</span>
       </div>
-      <div class="actions" style="margin:0;flex-direction:column">
-        <select onchange="patchContact('${esc(c.peer_agent)}', this.value)">
-          <option value="work_only" ${c.share_mode === "work_only" ? "selected" : ""}>work only</option>
-          <option value="explicit_only" ${c.share_mode === "explicit_only" ? "selected" : ""}>ask every time</option>
-        </select>
-        <button class="btn danger" onclick="delContact('${esc(c.peer_agent)}')">Remove</button>
-      </div>
-    </div>`
+      <select onchange="patchContact('${esc(c.peer_agent)}', this.value)">
+        <option value="work_only" ${c.share_mode === "work_only" ? "selected" : ""}>work only</option>
+        <option value="explicit_only" ${c.share_mode === "explicit_only" ? "selected" : ""}>ask every time</option>
+      </select></div>`
       )
-      .join("") || `<p class="muted">No contacts. Invite someone.</p>`;
-  return `<div class="panel"><h2>Contacts</h2>
-    <p class="muted">What their agent may learn. Default blocks dinner/health/family.</p>
+      .join("") || `<p class="muted">No people yet. Invite someone.</p>`;
+  return `<div class="panel"><h2>People</h2>
+    <p class="muted">Trusted minds. Default: work only — not dinner, not secrets.</p>
     <div class="list">${list}</div>
-    <div class="actions"><button class="btn primary" onclick="route('invites')">Invite by link</button></div>
-  </div>`;
+    <button class="btn primary" onclick="route('invites')">Invite</button></div>`;
 }
 
 async function patchContact(peer, mode) {
@@ -332,53 +366,34 @@ async function patchContact(peer, mode) {
   });
   route("contacts");
 }
-async function delContact(peer) {
-  if (!confirm("Remove?")) return;
-  await api(`/v1/contacts/${encodeURIComponent(peer)}`, { method: "DELETE" });
-  route("contacts");
-}
 
 async function invitesView() {
   const { invites } = await api("/v1/invites");
   const list =
     invites
       .map(
-        (i) => `
-    <div class="item">
-      <div>
+        (i) => `<div class="item"><div>
         <strong>${esc(i.label || i.code)}</strong>
-        <div class="muted">${i.uses}/${i.max_uses} uses · ${esc(i.share_mode)}</div>
         <div class="token-box">${esc(location.origin)}/?invite=${esc(i.code)}</div>
       </div>
-      <button class="btn" onclick="navigator.clipboard.writeText('${location.origin}/?invite=${esc(i.code)}')">Copy</button>
-    </div>`
+      <button class="btn" onclick="navigator.clipboard.writeText('${location.origin}/?invite=${esc(i.code)}')">Copy</button></div>`
       )
-      .join("") || `<p class="muted">No invites yet.</p>`;
-  return `
-  <div class="panel">
-    <h2>Invite</h2>
-    <p class="muted">Send one link. They join in the browser, then connect Telegram. No setup pack.</p>
-    <label>Label</label>
+      .join("") || `<p class="muted">None yet.</p>`;
+  return `<div class="panel"><h2>Invite</h2>
+    <p class="muted">Harshal / GF / friends: one link. They never see a terminal.</p>
     <input id="inv_label" placeholder="Harshal" />
-    <div class="actions"><button class="btn primary" onclick="createInvite()">Create invite link</button></div>
+    <button class="btn primary" onclick="createInvite()">Create link</button>
     <div id="inv_out"></div>
-    <h3 style="margin-top:16px">Your links</h3>
-    <div class="list">${list}</div>
-  </div>`;
+    <div class="list" style="margin-top:14px">${list}</div></div>`;
 }
 
 async function createInvite() {
-  try {
-    const data = await api("/v1/invites", {
-      method: "POST",
-      body: JSON.stringify({ label: $("#inv_label").value.trim(), share_mode: "work_only", max_uses: 10 }),
-    });
-    $("#inv_out").innerHTML = `<div class="token-box">${esc(data.url)}</div>
-      <button class="btn" onclick="navigator.clipboard.writeText('${esc(data.url)}')">Copy link</button>`;
-    setTimeout(() => route("invites"), 500);
-  } catch (e) {
-    $("#inv_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
-  }
+  const data = await api("/v1/invites", {
+    method: "POST",
+    body: JSON.stringify({ label: $("#inv_label").value.trim(), share_mode: "work_only", max_uses: 20 }),
+  });
+  $("#inv_out").innerHTML = `<div class="token-box">${esc(data.url)}</div>`;
+  setTimeout(() => route("invites"), 400);
 }
 
 async function groupsView() {
@@ -386,33 +401,30 @@ async function groupsView() {
   const list =
     groups
       .map((g) => {
-        const members = JSON.parse(g.members_json || "[]");
+        const m = JSON.parse(g.members_json || "[]");
         return `<div class="item"><div><strong>${esc(g.title || g.group_id)}</strong>
-        <div class="muted">${members.map(esc).join(", ")}</div></div></div>`;
+          <div class="muted">${m.map(esc).join(", ")}</div></div></div>`;
       })
       .join("") || `<p class="muted">No groups.</p>`;
-  return `
-  <div class="panel">
-    <h2>Groups</h2>
-    <div class="list">${list}</div>
-    <label>Group id</label><input id="g_id" placeholder="friends-core" />
-    <label>Title</label><input id="g_title" placeholder="Friends" />
-    <label>Members (mind: ids)</label>
-    <textarea id="g_members" placeholder="mind:you, mind:harshal, mind:gf"></textarea>
-    <div class="actions"><button class="btn primary" onclick="saveGroup()">Save</button></div>
-    <div id="g_out"></div>
-  </div>`;
+  return `<div class="panel"><h2>Groups</h2><div class="list">${list}</div>
+    <input id="g_id" placeholder="friends-core" />
+    <input id="g_title" placeholder="Friends" />
+    <textarea id="g_members" placeholder="mind:you, mind:harshal"></textarea>
+    <button class="btn primary" onclick="saveGroup()">Save group</button>
+    <div id="g_out"></div></div>`;
 }
 
 async function saveGroup() {
   try {
-    const members = $("#g_members").value.split(",").map((s) => s.trim()).filter(Boolean);
     await api("/v1/groups", {
       method: "POST",
       body: JSON.stringify({
         group_id: $("#g_id").value.trim(),
         title: $("#g_title").value.trim(),
-        members,
+        members: $("#g_members")
+          .value.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       }),
     });
     route("groups");
@@ -422,7 +434,7 @@ async function saveGroup() {
 }
 
 async function inboxView() {
-  const { messages } = await api("/v1/inbox?limit=40");
+  const { messages } = await api("/v1/inbox?limit=50");
   const list =
     messages
       .map(
@@ -432,8 +444,9 @@ async function inboxView() {
         <pre class="cmd">${esc(m.envelope)}</pre>
       </div></div>`
       )
-      .join("") || `<p class="muted">Empty. When linked, new mail also hits Telegram.</p>`;
-  return `<div class="panel"><h2>Inbox</h2><p class="muted">We push to Telegram — you don’t run poll jobs.</p>
+      .join("") || `<p class="muted">Empty.</p>`;
+  return `<div class="panel"><h2>Inbox</h2>
+    <p class="muted">Also pushed to Telegram when linked.</p>
     <div class="list">${list}</div>
     <button class="btn" onclick="route('inbox')">Refresh</button></div>`;
 }
@@ -441,16 +454,12 @@ async function inboxView() {
 async function contextView() {
   const data = await api("/v1/context");
   const f = data.fields || {};
-  return `
-  <div class="panel">
-    <h2>Work board</h2>
-    <p class="muted">Only work fields. Never dinner.</p>
-    <label>Project</label><input id="f_project_name" value="${esc(f.project_name || "")}" />
-    <label>Goal</label><input id="f_project_goal_public" value="${esc(f.project_goal_public || "")}" />
-    <label>Status</label><input id="f_shared_task_status" value="${esc(f.shared_task_status || "")}" />
-    <div class="actions"><button class="btn primary" onclick="saveContext()">Save</button></div>
-    <div id="ctx_out"></div>
-  </div>`;
+  return `<div class="panel"><h2>Work board</h2>
+    <input id="f_project_name" placeholder="project" value="${esc(f.project_name || "")}" />
+    <input id="f_project_goal_public" placeholder="goal" value="${esc(f.project_goal_public || "")}" />
+    <input id="f_shared_task_status" placeholder="status" value="${esc(f.shared_task_status || "")}" />
+    <button class="btn primary" onclick="saveContext()">Save</button>
+    <div id="ctx_out"></div></div>`;
 }
 
 async function saveContext() {
@@ -460,67 +469,41 @@ async function saveContext() {
     shared_task_status: $("#f_shared_task_status").value,
   };
   Object.keys(fields).forEach((k) => !fields[k] && delete fields[k]);
-  try {
-    await api("/v1/context", { method: "PUT", body: JSON.stringify({ fields }) });
-    $("#ctx_out").innerHTML = `<p class="ok">Saved</p>`;
-  } catch (e) {
-    $("#ctx_out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
-  }
+  await api("/v1/context", { method: "PUT", body: JSON.stringify({ fields }) });
+  $("#ctx_out").innerHTML = `<p class="ok">Saved</p>`;
 }
 
 async function render() {
-  if (qs("invite") && !S.token && !qs("p")) S.page = "accept";
+  if (qs("invite") && !S.token) S.page = "accept";
   else if (qs("p")) S.page = qs("p");
-  // map old setup page away
-  if (S.page === "setup") S.page = "telegram";
+  if (S.page === "setup" || S.page === "dashboard" || S.page === "home") {
+    if (S.token && S.page !== "home") S.page = S.page === "dashboard" ? "think" : S.page;
+  }
+  if (S.token && (S.page === "home" || S.page === "dashboard")) S.page = "think";
 
   renderNav();
   const el = main();
   el.innerHTML = `<p class="muted">Loading…</p>`;
   try {
-    let html = "";
-    switch (S.page) {
-      case "home":
-        html = homeView();
-        break;
-      case "onboard":
-        html = onboardView();
-        break;
-      case "login":
-        html = loginView();
-        break;
-      case "accept":
-        html = acceptView();
-        break;
-      case "dashboard":
-        html = await dashboardView();
-        break;
-      case "telegram":
-        html = await telegramView();
-        break;
-      case "contacts":
-        html = await contactsView();
-        break;
-      case "invites":
-        html = await invitesView();
-        break;
-      case "groups":
-        html = await groupsView();
-        break;
-      case "inbox":
-        html = await inboxView();
-        break;
-      case "context":
-        html = await contextView();
-        break;
-      default:
-        html = homeView();
-    }
-    el.innerHTML = html;
+    const map = {
+      home: homeView,
+      onboard: onboardView,
+      login: loginView,
+      accept: acceptView,
+      think: thinkView,
+      telegram: telegramView,
+      contacts: contactsView,
+      invites: invitesView,
+      groups: groupsView,
+      inbox: inboxView,
+      context: contextView,
+    };
+    const fn = map[S.page] || homeView;
+    el.innerHTML = await fn();
   } catch (e) {
     if (String(e.message).includes("unauthorized")) {
       setToken("");
-      el.innerHTML = `<div class="panel"><p class="err">Please log in again.</p>
+      el.innerHTML = `<div class="panel"><p class="err">Session expired.</p>
         <button class="btn" onclick="route('onboard')">Get started</button></div>`;
       renderNav();
       return;
@@ -535,9 +518,11 @@ Object.assign(window, {
   doRegister,
   doLogin,
   doAccept,
+  analyzeThink,
+  sendThink,
+  composeSend,
   pairTelegram,
   patchContact,
-  delContact,
   createInvite,
   saveGroup,
   saveContext,
