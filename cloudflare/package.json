@@ -1,13 +1,14 @@
 {
   "name": "hermes-mind-link-hub",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 execute mind-link --local --file=./migrations/0001_init.sql",
     "db:remote": "wrangler d1 execute mind-link --remote --file=./migrations/0001_init.sql",
-    "db:create": "wrangler d1 create mind-link"
+    "db:create": "wrangler d1 create mind-link",
+    "db:remote2": "wrangler d1 execute mind-link --remote --file=./migrations/0002_telegram_zero_friction.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250317.0",
